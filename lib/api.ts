@@ -509,7 +509,7 @@ export async function syncProjectAutoProgress(projectId: string) {
 
 export async function addProjectProgress(
   projectId: string,
-  payload: { progressName: string; percent: number; note?: string },
+  payload: { progressName: string; percent?: number; note?: string; photo?: File | null },
 ) {
   const { data } = await http.post<ApiResponse<Project>>(
     `/projects/${projectId}/progress`,
