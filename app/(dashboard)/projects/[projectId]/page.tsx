@@ -92,16 +92,6 @@ export default function ProjectDetailsPage() {
   const [newUpdateDescription, setNewUpdateDescription] = useState("");
   const [newUpdateFiles, setNewUpdateFiles] = useState<File[]>([]);
   const [selectedDocumentName, setSelectedDocumentName] = useState("");
-
-  // ── Create progress state ──────────────────────────────────────────────────
-  const [createProgressModal, setCreateProgressModal] = useState(false);
-  const [createProgressForm, setCreateProgressForm] = useState({
-    progressName: "",
-    note: "",
-    percent: 100,
-  });
-
-  // ── Edit progress state ────────────────────────────────────────────────────
   const [editingProgress, setEditingProgress] = useState<ProjectProgressUpdate | null>(null);
   const [progressForm, setProgressForm] = useState({
     progressName: "",
@@ -111,6 +101,12 @@ export default function ProjectDetailsPage() {
 
   // ── Delete progress state ─────────────────────────────────────────────────
   const [deletingProgress, setDeletingProgress] = useState<ProjectProgressUpdate | null>(null);
+
+  // ── Create progress state ─────────────────────────────────────────────────
+  const [createProgressModal, setCreateProgressModal] = useState(false);
+  const [createProgressForm, setCreateProgressForm] = useState({ progressName: "", note: "", percent: 100 });
+  const [createProgressPhoto, setCreateProgressPhoto] = useState<File | null>(null);
+  const [createProgressPhotoName, setCreateProgressPhotoName] = useState("");
 
   const [selectedUpdateId, setSelectedUpdateId] = useState<string | null>(null);
   const [deletingUpdate, setDeletingUpdate] = useState<UpdateItem | null>(null);
@@ -211,17 +207,21 @@ export default function ProjectDetailsPage() {
   });
 
   const createProgressMutation = useMutation({
-    mutationFn: (payload: { progressName: string; percent: number; note?: string }) =>
+    mutationFn: (payload: { progressName: string; percent: number; note?: string; photo?: File | null }) =>
       addProjectProgress(projectId, payload),
     onSuccess: () => {
       toast.success("Progress entry added");
       queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       setCreateProgressModal(false);
       setCreateProgressForm({ progressName: "", note: "", percent: 100 });
+      setCreateProgressPhoto(null);
+      setCreateProgressPhotoName("");
     },
     onError: (error) => toast.error(error.message),
   });
 
+  // Edit title + note only. The stored percent is passed through unchanged
+  // so the backend payload is valid, but the user cannot see or change it.
   const updateProgressMutation = useMutation({
     mutationFn: ({
       progressUpdateId,
@@ -234,7 +234,11 @@ export default function ProjectDetailsPage() {
       toast.success("Progress updated");
       queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       setEditingProgress(null);
-      setProgressForm({ progressName: "", note: "", percent: 100 });
+      setProgressForm({
+        progressName: "",
+        percent: 0,
+        note: "",
+      });
     },
     onError: (error) => toast.error(error.message),
   });
@@ -386,26 +390,21 @@ export default function ProjectDetailsPage() {
       toast.error("Progress name is required");
       return;
     }
+    const percent = Number(progressForm.percent);
+    const note = progressForm.note.trim();
+
+    if (Number.isNaN(percent) || percent < 0 || percent > 100) {
+      toast.error("Progress percentage must be between 0 and 100");
+      return;
+    }
+
     updateProgressMutation.mutate({
       progressUpdateId: editingProgress._id,
       payload: {
         progressName,
-        percent: progressForm.percent,
-        note: progressForm.note.trim(),
+        percent,
+        note,
       },
-    });
-  };
-
-  const handleCreateProgressSubmit = () => {
-    const progressName = createProgressForm.progressName.trim();
-    if (!progressName) {
-      toast.error("Progress name is required");
-      return;
-    }
-    createProgressMutation.mutate({
-      progressName,
-      percent: createProgressForm.percent,
-      note: createProgressForm.note.trim() || undefined,
     });
   };
 
@@ -512,6 +511,20 @@ export default function ProjectDetailsPage() {
     );
   }
 
+  const handleCreateProgressSubmit = () => {
+    const progressName = createProgressForm.progressName.trim();
+    if (!progressName) {
+      toast.error("Progress name is required");
+      return;
+    }
+    createProgressMutation.mutate({
+      progressName,
+      percent: createProgressForm.percent,
+      note: createProgressForm.note.trim() || undefined,
+      photo: createProgressPhoto ?? null,
+    });
+  };
+
   return (
     <div className="space-y-5">
       <Link
@@ -522,21 +535,22 @@ export default function ProjectDetailsPage() {
       </Link>
       {/* <p className="text-body-16 text-white/80">Create and manage your projects</p> */}
 
-      {/* Auto-timeline progress bar — driven by project dates, never by manual entries */}
-      {/* {project ? (
-        <Card className="max-w-md p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-body-16">Overall Progress</p>
-            <span className="text-sm font-semibold text-[#e8d38b]">
-              {autoTimelinePercent}%
-            </span>
-          </div>
-          <ProgressBar value={autoTimelinePercent} />
-          <p className="mt-2 text-xs text-white/70">
-            Auto-calculated from project start and estimated handover date.
-          </p>
-        </Card>
-      ) : null} */}
+      {/* <Card className="max-w-md p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-body-16">Progress</p>
+          <Button
+            size="sm"
+            onClick={() => syncAutoProgressMutation.mutate()}
+            disabled={syncAutoProgressMutation.isPending}
+          >
+            {syncAutoProgressMutation.isPending ? "Syncing..." : "Sync"}
+          </Button>
+        </div>
+        <ProgressBar value={lastProgress} />
+        <p className="mt-2 text-xs text-white/70">
+          Progress is auto-calculated daily from project start and end date.
+        </p>
+      </Card> */}
 
       <div className="flex flex-wrap items-center gap-3">
         <ProjectTabs activeTab={activeTab} onTabChange={setActiveTab} />
@@ -899,7 +913,7 @@ export default function ProjectDetailsPage() {
                 Cancel
               </Button>
               <Button type="submit" disabled={createProgressMutation.isPending}>
-                {createProgressMutation.isPending ? "Adding..." : "Add Progress"}
+                {createProgressMutation.isPending ? "Saving..." : "Add Progress"}
               </Button>
             </DialogFooter>
           </form>
@@ -912,15 +926,15 @@ export default function ProjectDetailsPage() {
         onOpenChange={(nextOpen) => {
           if (!nextOpen && !updateProgressMutation.isPending) {
             setEditingProgress(null);
-            setProgressForm({ progressName: "", note: "", percent: 100 });
+            setProgressForm({ progressName: "", percent: 0, note: "" });
           }
         }}
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Edit Progress Update</DialogTitle>
+            <DialogTitle>Edit Progress</DialogTitle>
             <DialogDescription>
-              Update the title, note, or percentage for this progress entry.
+              Update the details of this progress entry.
             </DialogDescription>
           </DialogHeader>
 
@@ -932,9 +946,9 @@ export default function ProjectDetailsPage() {
             }}
           >
             <div>
-              <Label htmlFor="progress-name">Title</Label>
+              <Label htmlFor="edit-progress-name">Title</Label>
               <Input
-                id="progress-name"
+                id="edit-progress-name"
                 value={progressForm.progressName}
                 onChange={(event) =>
                   setProgressForm((current) => ({
@@ -942,15 +956,15 @@ export default function ProjectDetailsPage() {
                     progressName: event.target.value,
                   }))
                 }
-                placeholder="Progress title"
+                placeholder="e.g. Foundations completed"
                 required
               />
             </div>
 
             <div>
-              <Label htmlFor="progress-note">Note</Label>
+              <Label htmlFor="edit-progress-note">Note</Label>
               <Textarea
-                id="progress-note"
+                id="edit-progress-note"
                 value={progressForm.note}
                 onChange={(event) =>
                   setProgressForm((current) => ({
@@ -978,14 +992,14 @@ export default function ProjectDetailsPage() {
                 variant="outline"
                 onClick={() => {
                   setEditingProgress(null);
-                  setProgressForm({ progressName: "", note: "", percent: 100 });
+                  setProgressForm({ progressName: "", percent: 0, note: "" });
                 }}
                 disabled={updateProgressMutation.isPending}
               >
                 Cancel
               </Button>
               <Button type="submit" disabled={updateProgressMutation.isPending}>
-                {updateProgressMutation.isPending ? "Updating..." : "Update"}
+                {updateProgressMutation.isPending ? "Saving..." : "Save Changes"}
               </Button>
             </DialogFooter>
           </form>
